@@ -20,7 +20,7 @@
 #sidebar .sidebar-header {
     padding: .4rem 1rem;
     border-bottom: 1px solid rgba(101, 109, 119, .16);
-    max-height: 55px;
+    max-height: 77px;
 }
 
 #sidebar ul.components {
@@ -71,6 +71,14 @@ a[aria-expanded="true"] {
     right: 20px;
     transform: translateY(-50%);
     display: none;
+}
+
+#sidebar .web-hkust-logo {
+    display: block;
+    margin: 0 auto;
+    margin-bottom: 1rem;
+    width: 100%;
+    max-width: 100%;
 }
 
 @media (max-width: 768px) {
