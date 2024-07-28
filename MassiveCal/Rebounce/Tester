@@ -1,0 +1,124 @@
+import pandas as pd
+from datetime import timedelta
+import numpy as np
+
+class Backtester:
+    def __init__(self, strategy, strike_pct, week_sep, size, start_date, end_date):
+        self.strategy = strategy
+        self.strike_pct = strike_pct
+        self.week_sep = week_sep
+        self.size = size
+        self.start_date = start_date
+        self.end_date = end_date
+        self.trading_schedule = TradingSchedule()
+        self.calculation = Calculation(self.trading_schedule)
+    
+    def run_backtest(self):
+        option_ticker_list = self.calculation.generate_option_ticker_list(
+            self.strategy, self.strike_pct, self.week_sep, self.size, self.start_date, self.end_date)
+        daily_pnl = self.calculation.calculate_daily_pnl(option_ticker_list, self.strategy)
+        return daily_pnl
+
+class TradingSchedule:
+    def __init__(self):
+        self.option_reference = pd.read_csv('option_reference.csv')
+        self.option_ts = pd.read_csv('option_ts.csv')
+        self.underlying_ts = pd.read_csv('underlying_ts.csv')
+
+        self.option_reference['option expiry dates'] = pd.to_datetime(self.option_reference['option expiry dates'])
+        self.option_ts['data date'] = pd.to_datetime(self.option_ts['data date'])
+        self.underlying_ts['data date'] = pd.to_datetime(self.underlying_ts['data date'])
+
+    def get_expiry(self, date, week_sep):
+        target_date = date + timedelta(weeks=week_sep)
+        expiry_dates = self.option_reference['option expiry dates'].unique()
+        expiry_dates.sort()
+        closest_expiry = expiry_dates[np.searchsorted(expiry_dates, target_date)]
+        return closest_expiry
+
+    def get_spot_price(self, date):
+        spot_price = self.underlying_ts[self.underlying_ts['data date'] == date]['price'].values[0]
+        return spot_price
+
+    def get_closest_strike(self, expiry, target_strike):
+        strikes = self.option_reference[self.option_reference['option expiry dates'] == expiry]['option strikes'].unique()
+        closest_strike = min(strikes, key=lambda x: abs(x - target_strike))
+        return closest_strike
+
+    def get_option_ticker(self, option_type, expiry, strike):
+        options = self.option_reference[
+            (self.option_reference['option expiry dates'] == expiry) & 
+            (self.option_reference['option strikes'] == strike) & 
+            (self.option_reference['option ticker'].str.contains(option_type))
+        ]
+        if not options.empty:
+            return options.iloc[0]['option ticker']
+        return None
+
+class Calculation:
+    def __init__(self, trading_schedule):
+        self.trading_schedule = trading_schedule
+
+    def generate_option_ticker_list(self, strategy, strike_pct, week_sep, size, start_date, end_date):
+        option_ticker_list = []
+        current_date = start_date
+
+        while current_date <= end_date:
+            expiry = self.trading_schedule.get_expiry(current_date, week_sep)
+            spot_price = self.trading_schedule.get_spot_price(current_date)
+            target_strike = spot_price * strike_pct / 100
+            strike = self.trading_schedule.get_closest_strike(expiry, target_strike)
+            option_type = 'P' if strategy == 'P' else 'C'
+            option_ticker = self.trading_schedule.get_option_ticker(option_type, expiry, strike)
+
+            if option_ticker:
+                option_ticker_list.append([option_ticker, current_date, expiry, size])
+                current_date = expiry + timedelta(days=1)
+            else:
+                break
+
+        return option_ticker_list
+
+    def calculate_daily_pnl(self, option_ticker_list, strategy):
+        daily_pnl = pd.DataFrame(columns=['date', 'pnl'])
+        current_positions = []
+
+        for ticker_info in option_ticker_list:
+            option_ticker, start_date, expiry_date, size = ticker_info
+            daily_prices = self.trading_schedule.option_ts[
+                self.trading_schedule.option_ts['option ticker'] == option_ticker
+            ][['data date', 'closing price']]
+
+            for idx, row in daily_prices.iterrows():
+                date = row['data date']
+                price_today = row['closing price']
+
+                if not current_positions:
+                    current_positions.append((date, price_today))
+                    continue
+
+                price_yesterday = current_positions[-1][1]
+                if date != expiry_date:
+                    pnl = (price_today - price_yesterday) / price_yesterday * size
+                else:
+                    spot_price = self.trading_schedule.get_spot_price(date)
+                    intrinsic_value = max(0, strike - spot_price if strategy == 'P' else spot_price - strike)
+                    pnl = intrinsic_value * size
+                
+                daily_pnl = daily_pnl.append({'date': date, 'pnl': pnl}, ignore_index=True)
+                current_positions.append((date, price_today))
+
+                if date == expiry_date:
+                    current_positions.clear()
+
+        daily_pnl['date'] = pd.to_datetime(daily_pnl['date'])
+        daily_pnl = daily_pnl.set_index('date')
+        daily_pnl = daily_pnl.resample('D').sum().fillna(0)
+        return daily_pnl
+
+# Example usage:
+start_date = pd.to_datetime('2024-07-01')
+end_date = pd.to_datetime('2024-07-28')
+backtester = Backtester('P', 90, 2, 1000000, start_date, end_date)
+daily_pnl = backtester.run_backtest()
+print(daily_pnl)
