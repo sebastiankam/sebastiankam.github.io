@@ -1,0 +1,159 @@
+Option Explicit
+
+Sub GenerateCharts()
+    Dim wsData As Worksheet
+    Dim wbNew As Workbook
+    Dim place As String
+    Dim dataRng As Range
+    Dim row As Range
+    Dim positiveData As Object
+    Dim negativeData As Object
+    Dim allData As Object
+    Dim industry As String
+    Dim percentage As Double
+    
+    Set wsData = ThisWorkbook.ActiveSheet
+    Set dataRng = wsData.Range("A1").CurrentRegion
+    
+    ' Create Dictionary objects
+    Set positiveData = CreateObject("Scripting.Dictionary")
+    Set negativeData = CreateObject("Scripting.Dictionary")
+    Set allData = CreateObject("Scripting.Dictionary")
+    
+    ' Prompt user for place
+    place = InputBox("Enter the place for which you want to generate charts:", "Select Place")
+    If place = "" Then Exit Sub ' User cancelled
+    
+    ' Collect and aggregate data
+    For Each row In dataRng.Rows
+        If row.row > 1 Then ' Skip header row
+            If CStr(row.Cells(1, 2).Value) = place Then ' Column B is "place"
+                If IsNumeric(row.Cells(1, 3).Value) Then ' Ensure percentage is a number
+                    industry = CStr(row.Cells(1, 7).Value) ' Column G is "industry"
+                    percentage = CDbl(row.Cells(1, 3).Value) ' Column C is "percentage"
+                    
+                    If percentage > 0 Then
+                        If Not positiveData.Exists(industry) Then
+                            positiveData(industry) = percentage
+                        Else
+                            positiveData(industry) = positiveData(industry) + percentage
+                        End If
+                    ElseIf percentage < 0 Then
+                        If Not negativeData.Exists(industry) Then
+                            negativeData(industry) = Abs(percentage)
+                        Else
+                            negativeData(industry) = negativeData(industry) + Abs(percentage)
+                        End If
+                    End If
+                    
+                    ' For allData, consider the sign of the percentage
+                    If Not allData.Exists(industry) Then
+                        allData(industry) = percentage
+                    Else
+                        allData(industry) = allData(industry) + percentage
+                    End If
+                End If
+            End If
+        End If
+    Next row
+    
+    ' Debug information
+    Debug.Print "Positive Data Count: " & positiveData.Count
+    Debug.Print "Negative Data Count: " & negativeData.Count
+    Debug.Print "All Data Count: " & allData.Count
+    
+    ' Check if data was found
+    If allData.Count = 0 Then
+        MsgBox "No data found for the place: " & place, vbExclamation
+        Exit Sub
+    End If
+    
+    ' Create a new workbook for the charts
+    Set wbNew = Workbooks.Add
+    
+    ' Create charts
+    Call CreatePieChart(positiveData, "Positive Percentage - " & place, wbNew)
+    Call CreatePieChart(negativeData, "Negative Percentage - " & place, wbNew)
+    Call CreatePieChart(allData, "All Percentage - " & place, wbNew)
+    
+    ' Remove the extra sheets
+    Application.DisplayAlerts = False
+    Do While wbNew.Worksheets.Count > 3
+        wbNew.Worksheets(1).Delete
+    Loop
+    Application.DisplayAlerts = True
+    
+    ' Activate the first sheet
+    wbNew.Worksheets(1).Activate
+    
+    MsgBox "Charts have been generated in a new workbook.", vbInformation
+End Sub
+
+Sub CreatePieChart(data As Object, title As String, wb As Workbook)
+    Dim ws As Worksheet
+    Dim cht As Chart
+    Dim rng As Range
+    Dim i As Long
+    Dim key As Variant
+    Dim totalValue As Double
+    
+    ' Check if data exists
+    If data.Count = 0 Then
+        Debug.Print "No data for chart: " & title
+        Exit Sub
+    End If
+    
+    ' Create a new worksheet for the chart
+    Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+    ws.Name = Left(Replace(title, " ", "_"), 31) ' Excel worksheet names are limited to 31 characters
+    
+    ' Calculate total absolute value for percentage calculation
+    totalValue = 0
+    For Each key In data.Keys
+        totalValue = totalValue + Abs(data(key))
+    Next key
+    
+    ' Populate data
+    ws.Cells(1, 1).Value = "Industry"
+    ws.Cells(1, 2).Value = "Value"
+    i = 2
+    For Each key In data.Keys
+        ws.Cells(i, 1).Value = key
+        ws.Cells(i, 2).Value = data(key)
+        i = i + 1
+    Next key
+    
+    ' Create chart
+    Set rng = ws.Range("A1").CurrentRegion
+    Set cht = ws.Shapes.AddChart2(201, xlPie).Chart
+    
+    With cht
+        .SetSourceData Source:=rng
+        .HasTitle = True
+        .ChartTitle.Text = title
+        
+        ' Configure data labels
+        With .SeriesCollection(1)
+            .HasDataLabels = True
+            With .DataLabels
+                .ShowCategoryName = True
+                .ShowPercentage = True
+                .ShowValue = False
+                .Position = xlLabelPositionOutsideEnd
+                .Format.TextFrame2.TextRange.Font.Size = 8
+            End With
+        End With
+        
+        ' Ensure chart is visible and properly sized
+        .Parent.Top = ws.Range("D1").Top
+        .Parent.Left = ws.Range("D1").Left
+        .Parent.Width = 400
+        .Parent.Height = 300
+    End With
+    
+    ' Adjust column widths
+    ws.Columns("A:B").AutoFit
+    
+    ' Debug information
+    Debug.Print "Created chart: " & title & " with " & data.Count & " data points"
+End Sub
